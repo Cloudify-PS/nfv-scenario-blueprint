@@ -1,0 +1,103 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/4.3/types.yaml
+  - plugin:cloudify-utilities-plugin
+
+
+inputs:
+
+  destination_port:
+    type: string
+    description: >
+      Destination port for the port forwarding Service
+    default: "8888"
+
+  vnf_deployment_name:
+    type: string
+    description: >
+      Deployment name of baseline Fortigate VNF
+    default: fortigate-vnf
+
+  application_deployment_name:
+    type: string
+    description: >
+      Deployment name of service to forward
+    default: private-webserver
+
+
+
+node_templates:
+
+  fortigate_vnf_deployment:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+      resource_config:
+        blueprint:
+          external_resource: true
+        deployment:
+          id: { get_input: vnf_deployment_name }
+          external_resource: true
+          outputs:
+            vnf_mgmt_ip: mgmt_ip
+            vnf_public_ip : vnf_public_ip
+
+  application_deployment:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+      resource_config:
+        blueprint:
+          external_resource: true
+        deployment:
+          id: { get_input: application_deployment_name }
+          external_resource: true
+          outputs:
+            service_ip: service_ip
+            service_port: service_port
+
+
+  fortigate_vnf_portforward_service:
+    type: cloudify.terminal.raw
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            terminal_auth: &terminal_auth
+              user: admin
+              password: ''
+              ip: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, mgmt_ip ] }
+              promt_check:
+                - '#'
+                - '$'
+              errors:
+                - "Command fail."
+            calls:
+              - action: exit
+        start:
+          inputs:
+            terminal_auth: *terminal_auth
+            calls:
+              - template: templates/fortigate-portforward-start.txt
+                params:
+                  PORTFORWARD_IP: { get_attribute: [application_deployment, deployment, outputs, service_ip ] }
+                  PORTFORWARD_PORT: { get_attribute: [application_deployment, deployment, outputs, service_port ] }
+                  DESTINATION_IF: "port3"
+                  DESTINATION_PORT: { get_input: destination_port }
+        stop:
+          inputs:
+            terminal_auth: *terminal_auth
+            calls:
+              - template: templates/fortigate-portforward-stop.txt
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: fortigate_vnf_deployment
+      - type: cloudify.relationships.connected_to
+        target: application_deployment
+
+outputs:
+  service_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, mgmt_ip ] }
+  service_public_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_public_ip ] }
+  service_port:
+    value: { get_input: destination_port }

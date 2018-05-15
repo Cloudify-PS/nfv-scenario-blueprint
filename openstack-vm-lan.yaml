@@ -1,0 +1,293 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/4.3/types.yaml
+  - plugin:cloudify-openstack-plugin
+  - plugin:cloudify-utilities-plugin
+
+inputs:
+
+  vnf_name:
+    description:
+      VNF name for naming VNF related resources
+
+  vnf_image_name:
+    default: {get_input: vnf_name}
+
+  image_url:
+    description:
+      VNF Image URL QCOW2 format
+
+  flavor:
+    description: >
+      An Openstack Flavor ID.
+    default: { get_secret: small_image_flavor }
+
+  hostname:
+    default: { get_input: vnf_name }
+
+  network_deployment_name:
+    default: openstack-example-network
+
+  mgmt_net_name:
+    description: >
+      Name of the managment network Cloudiify manager use for provisioning
+    default: provider
+
+  mgmt_subnet_name:
+    description: >
+      Name of the managment network Cloudiify manager use for provisioning
+    default: provider_subnet
+
+
+  allowed_address_pairs:
+    description: >
+      allow address pairs to permit address forwarding to other networks
+    default: []
+
+  vnf_config_port:
+    description: >
+      The port which will be used to configure the VNF
+
+
+
+dsl_definitions:
+
+  openstack_config: &openstack_config
+    username: { get_secret: keystone_username }
+    password: { get_secret: keystone_password }
+    tenant_name: { get_secret: keystone_tenant_name }
+    auth_url: { get_secret: keystone_url }
+    region: { get_secret: region }
+
+
+node_templates:
+
+  vnf_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      openstack_config: *openstack_config
+      agent_config:
+        install_method: none
+      server:
+        name: { get_input: hostname }
+        key_name: ''
+        image: { get_property: [ image, resource_id ] }
+        flavor: { get_input: flavor }
+      management_network_name: { get_property: [ mgmt_network, resource_id ] }
+    relationships:
+    - type: cloudify.openstack.server_connected_to_port
+      target: mgmt_port
+    - type: cloudify.openstack.server_connected_to_port
+      target: north_network_port
+    - type: cloudify.openstack.server_connected_to_port
+      target: south_network_port
+    - type: cloudify.relationships.depends_on
+      target: image
+
+  mgmt_port:
+    type: cloudify.openstack.nodes.Port
+    properties:
+      openstack_config: *openstack_config
+    relationships:
+    - type: cloudify.relationships.contained_in
+      target: mgmt_network
+    - type: cloudify.relationships.depends_on
+      target: mgmt_subnet
+    - type: cloudify.openstack.port_connected_to_security_group
+      target: security_group
+    - type: cloudify.openstack.port_connected_to_floating_ip
+      target: ip_mgmt
+
+  south_network_port:
+    type: cloudify.openstack.nodes.Port
+    properties:
+      openstack_config: *openstack_config
+    relationships:
+    - type: cloudify.relationships.contained_in
+      target: south_network
+    - type: cloudify.relationships.depends_on
+      target: south_network_subnet
+    - type: cloudify.openstack.port_connected_to_security_group
+      target: security_group
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            args:
+              allowed_address_pairs: {get_input: allowed_address_pairs}
+
+  north_network_port:
+    type: cloudify.openstack.nodes.Port
+    properties:
+      openstack_config: *openstack_config
+    relationships:
+    - type: cloudify.relationships.contained_in
+      target: north_network
+    - type: cloudify.relationships.depends_on
+      target: north_network_subnet
+    - type: cloudify.openstack.port_connected_to_security_group
+      target: security_group
+    - type: cloudify.openstack.port_connected_to_floating_ip
+      target: ip_pub
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            args:
+              allowed_address_pairs: {get_input: allowed_address_pairs}
+
+
+  image:
+    type: cloudify.openstack.nodes.Image
+    properties:
+      image:
+        container_format: "bare"
+        disk_format: "qcow2"
+      openstack_config: *openstack_config
+      image_url: {get_input : image_url }
+      use_external_resource: true
+      create_if_missing: true
+      resource_id: {get_input: vnf_image_name }
+
+  mgmt_subnet:
+    type: cloudify.openstack.nodes.Subnet
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: {get_input: mgmt_subnet_name}
+    relationships:
+    - target: mgmt_network
+      type: cloudify.relationships.contained_in
+
+  mgmt_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: {get_input: mgmt_net_name}
+
+##
+#  south Networks
+####################
+
+  south_network_subnet:
+    type: cloudify.openstack.nodes.Subnet
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_attribute: [ openstack, deployment, outputs, private_subnet ] }
+    relationships:
+    - target: south_network
+      type: cloudify.relationships.contained_in
+
+  south_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_attribute: [ openstack, deployment, outputs, private_network ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: openstack
+##
+# North Networks
+####################
+
+  north_network_subnet:
+    type: cloudify.openstack.nodes.Subnet
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_attribute: [ openstack, deployment, outputs, public_subnet ] }
+    relationships:
+    - target: north_network
+      type: cloudify.relationships.contained_in
+
+  north_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource:  true
+      resource_id: { get_attribute: [ openstack, deployment, outputs, public_network ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: openstack
+
+
+  security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
+    properties:
+      openstack_config: *openstack_config
+      security_group:
+        name: {concat:[{get_input: vnf_name},"-security_group"]}
+        description: generic security group
+      rules:
+        - remote_ip_prefix: 0.0.0.0/0
+          protocol: "TCP"
+        - remote_ip_prefix: 0.0.0.0/0
+          protocol: "UDP"
+        - remote_ip_prefix: 0.0.0.0/0
+          protocol: "ICMP"
+          port_range_min: 0
+          port_range_max: 0
+        - remote_ip_prefix: 0.0.0.0/0
+          protocol: tcp
+          port: {get_input: vnf_config_port}
+
+  ip_mgmt:
+    type: cloudify.openstack.nodes.FloatingIP
+    properties:
+      openstack_config: *openstack_config
+      floatingip:
+        floating_network_id: { get_attribute: [ openstack, deployment, outputs, external_network ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: openstack
+
+  ip_pub:
+    type: cloudify.openstack.nodes.FloatingIP
+    properties:
+      openstack_config: *openstack_config
+      floatingip:
+        floating_network_id: { get_attribute: [ openstack, deployment, outputs, external_network ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: openstack
+
+
+
+  openstack:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+      resource_config:
+        blueprint:
+          id: { get_input: network_deployment_name }
+          blueprint_archive: https://github.com/cloudify-examples/openstack-example-network/archive/master.zip
+          main_file_name: simple-blueprint.yaml
+          external_resource: external
+        deployment:
+          id: { get_input: network_deployment_name }
+          outputs:
+            external_network: external_network
+            public_network_router: public_network_router
+            public_network: public_network
+            private_network: private_network
+            public_subnet: public_subnet
+            private_subnet: private_subnet
+          external_resource: external
+        reexecute: false
+
+outputs:
+  vnf_mgmt_ip:
+    value: {get_attribute: [mgmt_port, fixed_ip_address]}
+  vnf_mgmt_public_ip:
+    value: {get_attribute: [ip_mgmt, floating_ip_address]}
+  vnf_south_ip:
+    value: {get_attribute: [south_network_port, fixed_ip_address]}
+  vnf_north_ip:
+    value: {get_attribute: [north_network_port, fixed_ip_address]}
+  vnf_public_ip:
+    value: {get_attribute: [ip_pub, floating_ip_address]}
+  vnf_hostname:
+    value: {get_input: hostname}

@@ -1,0 +1,131 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/4.3/types.yaml
+  - plugin:cloudify-openstack-plugin
+  - plugin:cloudify-utilities-plugin
+
+
+inputs:
+
+  fortigate_image_url:
+    default: "https://s3-eu-west-1.amazonaws.com/cloudify-labs/images/FG562-DZ.img"
+
+
+  flavor:
+    description: >
+      An Openstack Flavor ID.
+    default: { get_secret: small_image_flavor }
+
+  vnf_config_port:
+    description: >
+      The port which will be used to configure the VNF
+    default: 89
+
+  vnf_name:
+    description: >
+      Name of the VNF
+    default: "fortigate"
+
+
+  blueprint_name:
+    description: >
+      HQ blueprint name
+    default: "openstack-vnf-infra"
+
+  deployment_name:
+    description: >
+      HQ blueprint name
+    default: {concat: [{get_input: vnf_name},"_",{get_input: blueprint_name}]}
+
+  external_vnf_deployment:
+    description: >
+      Use External VNF Deployment
+    default: false
+
+
+  network_deployment_name:
+    description: >
+      Deployment of network infra
+    default: openstack-example-network
+
+
+dsl_definitions:
+
+  openstack_config: &openstack_config
+    username: { get_secret: keystone_username }
+    password: { get_secret: keystone_password }
+    tenant_name: { get_secret: keystone_tenant_name }
+    auth_url: { get_secret: keystone_url }
+    region: { get_secret: region }
+
+
+
+
+node_templates:
+
+  fortigate_vnf_deployment:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+      resource_config:
+        blueprint:
+          id: { get_input: blueprint_name }
+          external_resource: true
+        deployment:
+          id: { get_input: deployment_name }
+          external_resource: { get_input: external_vnf_deployment }
+          inputs:
+            image_url: {get_input: fortigate_image_url}
+            flavor: {get_input: flavor}
+            vnf_config_port: {get_input: vnf_config_port}
+            vnf_name: {get_input: vnf_name}
+            network_deployment_name:  openstack-example-network
+
+
+          outputs:
+            vnf_mgmt_ip: vnf_mgmt_ip_value
+            vnf_south_ip: vnf_south_ip_value
+            vnf_north_ip: vnf_north_ip_value
+            vnf_hostname: vnf_hostname_value
+            vnf_public_ip: vnf_public_ip_value
+
+  fortigate_vnf_baseline_config:
+    type: cloudify.terminal.raw
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            terminal_auth: &terminal_auth
+              user: admin
+              password: ''
+              ip: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_mgmt_ip_value] }
+              promt_check:
+                - '#'
+                - '$'
+              errors:
+                - "Command fail."
+            calls:
+              - action: exit
+        start:
+          inputs:
+            terminal_auth: *terminal_auth
+            calls:
+              - template: templates/fortigate-baseline.txt
+    relationships:
+      - type: cloudify.relationships.depends_on
+        target: fortigate_vnf_deployment
+
+
+
+outputs:
+
+  vnf_mgmt_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_mgmt_ip_value] }
+  vnf_south_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_south_ip_value] }
+  vnf_north_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_north_ip_value] }
+  vnf_public_ip:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_public_ip_value] }
+  vnf_hostname:
+    value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_hostname_value] }
