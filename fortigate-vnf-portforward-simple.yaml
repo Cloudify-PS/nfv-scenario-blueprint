@@ -100,4 +100,4 @@ outputs:
   service_public_ip:
     value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_public_ip ] }
   service_port:
-    value: { get_input: destination_port }
+    value: { get_attribute: [fortigate_vnf_portforward_service, params, port ] }
