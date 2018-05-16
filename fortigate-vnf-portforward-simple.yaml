@@ -3,13 +3,9 @@ tosca_definitions_version: cloudify_dsl_1_3
 imports:
   - http://www.getcloudify.org/spec/cloudify/4.3/types.yaml
   - plugin:cloudify-utilities-plugin
-  - types/terminal-config-types.yaml
+
 
 inputs:
-
-  configuration:
-    default:
-      port: "8888"
 
   destination_port:
     type: string
@@ -32,11 +28,6 @@ inputs:
 
 
 node_templates:
-
-  configuration_loader:
-    type: configuration_loader
-    properties:
-      parameters_json: { get_input: configuration }
 
   fortigate_vnf_deployment:
     type: cloudify.nodes.DeploymentProxy
@@ -66,11 +57,7 @@ node_templates:
 
 
   fortigate_vnf_portforward_service:
-    type: terminal.config.raw
-    properties:
-      params_list:
-        - port
-
+    type: cloudify.terminal.raw
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
@@ -95,31 +82,17 @@ node_templates:
                   PORTFORWARD_IP: { get_attribute: [application_deployment, deployment, outputs, service_ip ] }
                   PORTFORWARD_PORT: { get_attribute: [application_deployment, deployment, outputs, service_port ] }
                   DESTINATION_IF: "port3"
-                  DESTINATION_PORT: { get_attribute: [ SELF, params, port ] }
+                  DESTINATION_PORT: { get_input: destination_port }
         stop:
           inputs:
             terminal_auth: *terminal_auth
             calls:
               - template: templates/fortigate-portforward-stop.txt
-
-        update:
-          inputs:
-            terminal_auth: *terminal_auth
-            calls:
-              - template: templates/fortigate-portforward-update.txt
-                params:
-                  PORTFORWARD_IP: { get_attribute: [application_deployment, deployment, outputs, service_ip ] }
-                  PORTFORWARD_PORT: { get_attribute: [application_deployment, deployment, outputs, service_port ] }
-                  DESTINATION_IF: "port3"
-                  DESTINATION_PORT: { get_attribute: [ SELF, params, port ] }
-
     relationships:
       - type: cloudify.relationships.contained_in
         target: fortigate_vnf_deployment
       - type: cloudify.relationships.connected_to
         target: application_deployment
-      - type: load_from_config
-        target: configuration_loader
 
 outputs:
   service_ip:
@@ -128,19 +101,3 @@ outputs:
     value: { get_attribute: [fortigate_vnf_deployment, deployment, outputs, vnf_public_ip ] }
   service_port:
     value: { get_input: destination_port }
-
-workflows:
-
-  portforwarding_update:
-    mapping: configuration.cloudify_configuration.tasks.update
-    parameters:
-      params:
-        description: json string
-        default: { "port" : "9999" }
-      configuration_node_id:
-        default: configuration_loader
-      merge_dict:
-        default: false
-      node_types_to_update:
-        default:
-          - terminal.config.raw

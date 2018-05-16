@@ -1,0 +1,16 @@
+node_types:
+  terminal.config.raw:
+    derived_from: cloudify.terminal.raw
+    properties:
+      params_list:
+        default: []
+      params:
+        default: {}
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        update:
+          implementation: terminal.cloudify_terminal.tasks.run
+          inputs: {}
+        is_alive:
+          implementation: terminal.cloudify_terminal.tasks.run
+          inputs: {}

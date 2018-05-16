@@ -1,0 +1,5 @@
+config firewall vip
+    edit "sg-port-forward-vip"
+        set extport {{DESTINATION_PORT}}
+    next
+end
